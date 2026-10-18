@@ -4,7 +4,7 @@ from typing import AsyncGenerator
 from starlette.requests import Request
 from starlette.responses import StreamingResponse, Response
 from app.config import CHUNK_SIZE
-from app.transfer_manager import ShareItem, transfer_manager
+from app.transfer_manager import ShareItem, FileEntry, transfer_manager
 
 def parse_range_header(range_header: str, file_size: int):
     """
@@ -19,7 +19,6 @@ def parse_range_header(range_header: str, file_size: int):
     start = int(start_str) if start_str else 0
     end = int(end_str) if end_str else file_size - 1
 
-    # Clamp ranges to file bounds
     start = max(0, min(start, file_size - 1))
     end = max(start, min(end, file_size - 1))
     return start, end
@@ -51,18 +50,28 @@ async def file_chunk_generator(
     finally:
         transfer_manager.end_transfer(transfer_id)
 
-def create_streaming_response(request: Request, share: ShareItem, client_ip: str) -> Response:
+def create_streaming_response(
+    request: Request,
+    share: ShareItem,
+    file_entry: FileEntry,
+    client_ip: str,
+    inline: bool = False
+) -> Response:
     """
-    Builds a high-speed HTTP response with RFC 7233 Range support for resume capability.
+    Builds a high-speed HTTP response with RFC 7233 Range support for resume capability
+    and seeking in video/audio players.
     """
-    file_size = share.file_size
+    file_size = file_entry.file_size
     range_header = request.headers.get("Range")
+
+    disposition = "inline" if inline else "attachment"
+    content_type = file_entry.mime_type if inline else "application/octet-stream"
 
     headers = {
         "Accept-Ranges": "bytes",
-        "Content-Disposition": f'attachment; filename="{share.file_name}"',
-        "Content-Type": "application/octet-stream",
-        "Cache-Control": "no-cache",
+        "Content-Disposition": f'{disposition}; filename="{file_entry.file_name}"',
+        "Content-Type": content_type,
+        "Cache-Control": "public, max-age=3600" if inline else "no-cache",
     }
 
     if range_header:
@@ -73,28 +82,32 @@ def create_streaming_response(request: Request, share: ShareItem, client_ip: str
 
         transfer = transfer_manager.start_transfer(
             token=share.token,
+            file_id=file_entry.file_id,
             client_ip=client_ip,
             start_byte=start,
-            end_byte=end
+            end_byte=end,
+            total_size=file_size,
         )
 
         return StreamingResponse(
-            file_chunk_generator(share.file_path, start, end, transfer.transfer_id),
+            file_chunk_generator(file_entry.file_path, start, end, transfer.transfer_id),
             status_code=206,
             headers=headers,
         )
     else:
-        # Full file download
+        # Full file download / preview
         headers["Content-Length"] = str(file_size)
         transfer = transfer_manager.start_transfer(
             token=share.token,
+            file_id=file_entry.file_id,
             client_ip=client_ip,
             start_byte=0,
-            end_byte=file_size - 1
+            end_byte=file_size - 1,
+            total_size=file_size,
         )
 
         return StreamingResponse(
-            file_chunk_generator(share.file_path, 0, file_size - 1, transfer.transfer_id),
+            file_chunk_generator(file_entry.file_path, 0, file_size - 1, transfer.transfer_id),
             status_code=200,
             headers=headers,
         )

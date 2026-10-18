@@ -1,11 +1,12 @@
 import asyncio
 import io
 import os
+import zipfile
 from pathlib import Path
-from typing import Optional, Set
+from typing import List, Optional, Set
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 import qrcode
@@ -20,7 +21,12 @@ from app.config import (
 )
 from app.ftp_server import ftp_service
 from app.streamer import create_streaming_response
-from app.transfer_manager import transfer_manager
+from app.transfer_manager import (
+    detect_file_category,
+    format_bytes,
+    get_content_type,
+    transfer_manager,
+)
 from app.tunnel import TunnelManager
 
 app = FastAPI(title="LocalFTP - Direct High-Speed File Transfer")
@@ -52,7 +58,6 @@ def format_public_link(base_url: Optional[str], token: str) -> Optional[str]:
 
 @app.on_event("startup")
 async def startup_event():
-    # Start background websocket broadcast loop
     asyncio.create_task(broadcast_stats_loop())
 
 @app.on_event("shutdown")
@@ -60,22 +65,43 @@ def shutdown_event():
     tunnel_manager.stop()
     ftp_service.stop()
 
-# Native file dialog in thread
-def _native_file_picker() -> Optional[str]:
+# Native file dialogs in thread
+def _native_multi_file_picker() -> List[str]:
     try:
         import tkinter as tk
         from tkinter import filedialog
         root = tk.Tk()
         root.withdraw()
         root.attributes("-topmost", True)
-        file_path = filedialog.askopenfilename(
-            title="Select File to Share (any size, up to 100+ GB)"
+        files = filedialog.askopenfilenames(
+            title="Select Files to Share (Hold Ctrl or Shift to select multiple)"
         )
         root.destroy()
-        return file_path if file_path else None
+        return list(files) if files else []
     except Exception as e:
         print(f"Error in file dialog: {e}")
-        return None
+        return []
+
+def _native_folder_picker() -> List[str]:
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        folder = filedialog.askdirectory(title="Select Entire Folder to Share")
+        root.destroy()
+        if not folder:
+            return []
+        
+        file_list = []
+        for root_dir, _, filenames in os.walk(folder):
+            for filename in filenames:
+                file_list.append(os.path.join(root_dir, filename))
+        return file_list
+    except Exception as e:
+        print(f"Error in folder dialog: {e}")
+        return []
 
 # Background WebSocket broadcaster for live dashboard updates
 async def broadcast_stats_loop():
@@ -87,7 +113,6 @@ async def broadcast_stats_loop():
             stats["local_ip"] = get_local_ip()
             stats["port"] = tunnel_manager.port
 
-            # Build list of active shares with their links
             base_public = tunnel_manager.public_url
             base_local = f"http://{stats['local_ip']}:{stats['port']}"
 
@@ -95,9 +120,19 @@ async def broadcast_stats_loop():
             for token, share in transfer_manager.shares.items():
                 shares_list.append({
                     "token": token,
-                    "file_name": share.file_name,
-                    "file_path": share.file_path,
-                    "file_size": share.file_size,
+                    "title": share.title,
+                    "files_count": len(share.files),
+                    "files": [
+                        {
+                            "file_id": f.file_id,
+                            "file_name": f.file_name,
+                            "file_size": f.file_size,
+                            "formatted_size": f.formatted_size,
+                            "category": f.category,
+                        }
+                        for f in share.files
+                    ],
+                    "total_size": share.total_size,
                     "formatted_size": share.formatted_size,
                     "password_protected": share.password is not None,
                     "download_count": share.download_count,
@@ -132,39 +167,92 @@ async def dashboard_view(request: Request):
         },
     )
 
-@app.post("/api/select-file")
-async def select_file_dialog():
-    path = await asyncio.to_thread(_native_file_picker)
-    if not path:
-        return {"status": "cancelled"}
-    
-    p = Path(path)
-    if not p.is_file():
-        raise HTTPException(status_code=400, detail="Invalid file selected")
+@app.get("/about", response_class=HTMLResponse)
+async def about_view(request: Request):
+    return templates.TemplateResponse(
+        request=request,
+        name="about.html",
+        context={},
+    )
 
-    size = p.stat().st_size
-    formatted_size = f"{size / (1024**3):.2f} GB" if size >= 1024**3 else f"{size / (1024**2):.2f} MB"
+@app.post("/api/select-files")
+async def select_files_dialog():
+    paths = await asyncio.to_thread(_native_multi_file_picker)
+    if not paths:
+        return {"status": "cancelled", "files": []}
+
+    results = []
+    total_bytes = 0
+    for p_str in paths:
+        p = Path(p_str)
+        if p.is_file():
+            size = p.stat().st_size
+            total_bytes += size
+            mime = get_content_type(p.name)
+            cat = detect_file_category(p.name, mime)
+            results.append({
+                "file_path": str(p),
+                "file_name": p.name,
+                "file_size": size,
+                "formatted_size": format_bytes(size),
+                "category": cat,
+            })
 
     return {
         "status": "selected",
-        "file_path": str(p),
-        "file_name": p.name,
-        "file_size": size,
-        "formatted_size": formatted_size,
+        "files": results,
+        "total_files": len(results),
+        "total_bytes": total_bytes,
+        "formatted_total_size": format_bytes(total_bytes),
+    }
+
+@app.post("/api/select-folder")
+async def select_folder_dialog():
+    paths = await asyncio.to_thread(_native_folder_picker)
+    if not paths:
+        return {"status": "cancelled", "files": []}
+
+    results = []
+    total_bytes = 0
+    for p_str in paths:
+        p = Path(p_str)
+        if p.is_file():
+            size = p.stat().st_size
+            total_bytes += size
+            mime = get_content_type(p.name)
+            cat = detect_file_category(p.name, mime)
+            results.append({
+                "file_path": str(p),
+                "file_name": p.name,
+                "file_size": size,
+                "formatted_size": format_bytes(size),
+                "category": cat,
+            })
+
+    return {
+        "status": "selected",
+        "files": results,
+        "total_files": len(results),
+        "total_bytes": total_bytes,
+        "formatted_total_size": format_bytes(total_bytes),
     }
 
 @app.post("/api/share")
 async def create_share(data: dict):
-    file_path = data.get("file_path")
+    # Support both "file_paths" list or single legacy "file_path"
+    file_paths = data.get("file_paths")
+    if not file_paths and data.get("file_path"):
+        file_paths = [data.get("file_path")]
+
     password = data.get("password")
+    title = data.get("title")
     enable_tunnel = data.get("enable_tunnel", True)
 
-    if not file_path or not os.path.isfile(file_path):
-        raise HTTPException(status_code=400, detail="File does not exist")
+    if not file_paths:
+        raise HTTPException(status_code=400, detail="No files provided to share")
 
-    share = transfer_manager.add_share(file_path, password)
+    share = transfer_manager.add_share(file_paths, password, title)
 
-    # Start tunnel if requested and not running
     if enable_tunnel and tunnel_manager.status != "connected":
         await asyncio.to_thread(tunnel_manager.start)
 
@@ -175,8 +263,9 @@ async def create_share(data: dict):
 
     return {
         "token": share.token,
-        "file_name": share.file_name,
-        "file_size": share.file_size,
+        "title": share.title,
+        "files_count": len(share.files),
+        "total_size": share.total_size,
         "formatted_size": share.formatted_size,
         "local_url": local_url,
         "public_url": public_url,
@@ -211,7 +300,6 @@ async def update_settings(data: dict):
     settings["cf_custom_domain"] = data.get("cf_custom_domain", settings.get("cf_custom_domain", "")).strip()
     save_settings(settings)
 
-    # If tunnel is active, restart with new settings
     if tunnel_manager.status in ["connected", "connecting"]:
         await asyncio.to_thread(tunnel_manager.stop)
         await asyncio.to_thread(tunnel_manager.start)
@@ -232,14 +320,13 @@ async def websocket_endpoint(websocket: WebSocket):
     active_websockets.add(websocket)
     try:
         while True:
-            # Keep socket alive
             await websocket.receive_text()
     except WebSocketDisconnect:
         active_websockets.discard(websocket)
     except Exception:
         active_websockets.discard(websocket)
 
-# --- RECIPIENT DOWNLOAD ROUTES ---
+# --- RECIPIENT DOWNLOAD & PREVIEW ROUTES ---
 
 @app.get("/d/{token}", response_class=HTMLResponse)
 async def recipient_view(request: Request, token: str, key: Optional[str] = None):
@@ -251,20 +338,19 @@ async def recipient_view(request: Request, token: str, key: Optional[str] = None
             status_code=404
         )
 
-    # Check password protection
     is_authenticated = True
     if share.password:
         is_authenticated = (key == share.password)
-
-    client_ip = request.client.host if request.client else "unknown"
 
     return templates.TemplateResponse(
         request=request,
         name="download.html",
         context={
             "token": token,
-            "file_name": share.file_name,
-            "file_size": share.file_size,
+            "title": share.title,
+            "files": share.files,
+            "files_count": len(share.files),
+            "total_size": share.total_size,
             "formatted_size": share.formatted_size,
             "requires_password": share.password is not None,
             "is_authenticated": is_authenticated,
@@ -272,21 +358,71 @@ async def recipient_view(request: Request, token: str, key: Optional[str] = None
         },
     )
 
-@app.get("/d/{token}/download")
-async def download_file(request: Request, token: str, key: Optional[str] = None):
+@app.get("/d/{token}/preview/{file_id}")
+async def preview_file(request: Request, token: str, file_id: str, key: Optional[str] = None):
     share = transfer_manager.get_share(token)
     if not share:
         raise HTTPException(status_code=404, detail="File share expired or invalid")
 
-    # Password verification
     if share.password and key != share.password:
         raise HTTPException(status_code=401, detail="Invalid password")
 
-    if not os.path.isfile(share.file_path):
-        raise HTTPException(status_code=404, detail="Source file not found on host machine")
+    file_entry = share.get_file(file_id)
+    if not file_entry or not os.path.isfile(file_entry.file_path):
+        raise HTTPException(status_code=404, detail="Source file not found")
 
     client_ip = request.headers.get("cf-connecting-ip") or (request.client.host if request.client else "unknown")
-    return create_streaming_response(request, share, client_ip)
+    return create_streaming_response(request, share, file_entry, client_ip, inline=True)
+
+@app.get("/d/{token}/download/{file_id}")
+async def download_single_file(request: Request, token: str, file_id: str, key: Optional[str] = None):
+    share = transfer_manager.get_share(token)
+    if not share:
+        raise HTTPException(status_code=404, detail="File share expired or invalid")
+
+    if share.password and key != share.password:
+        raise HTTPException(status_code=401, detail="Invalid password")
+
+    file_entry = share.get_file(file_id)
+    if not file_entry or not os.path.isfile(file_entry.file_path):
+        raise HTTPException(status_code=404, detail="Source file not found")
+
+    client_ip = request.headers.get("cf-connecting-ip") or (request.client.host if request.client else "unknown")
+    return create_streaming_response(request, share, file_entry, client_ip, inline=False)
+
+@app.get("/d/{token}/download")
+async def download_default_file(request: Request, token: str, key: Optional[str] = None):
+    share = transfer_manager.get_share(token)
+    if not share or not share.files:
+        raise HTTPException(status_code=404, detail="File share expired or invalid")
+
+    first_file = share.get_first_file()
+    return await download_single_file(request, token, first_file.file_id, key)
+
+@app.get("/d/{token}/download-all")
+async def download_all_zip(request: Request, token: str, key: Optional[str] = None):
+    share = transfer_manager.get_share(token)
+    if not share or not share.files:
+        raise HTTPException(status_code=404, detail="File share expired or invalid")
+
+    if share.password and key != share.password:
+        raise HTTPException(status_code=401, detail="Invalid password")
+
+    # Fast in-memory / streamed zip
+    def zip_generator():
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for f_entry in share.files:
+                if os.path.isfile(f_entry.file_path):
+                    zf.write(f_entry.file_path, arcname=f_entry.file_name)
+        buf.seek(0)
+        yield buf.getvalue()
+
+    headers = {
+        "Content-Disposition": f'attachment; filename="{share.title}.zip"',
+        "Content-Type": "application/zip",
+    }
+    return StreamingResponse(zip_generator(), headers=headers)
 
 @app.get("/d/{token}/qr")
 async def generate_qr(token: str, url: str):
