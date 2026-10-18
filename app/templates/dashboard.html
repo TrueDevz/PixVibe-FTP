@@ -44,7 +44,7 @@
         <!-- Tunnel Status -->
         <div class="flex items-center gap-2 bg-slate-800/80 border border-slate-700/80 px-3 py-1.5 rounded-lg text-xs">
           <i class="fa-solid fa-globe text-blue-400"></i>
-          <span id="tunnelStatusBadge" class="font-medium px-2 py-0.5 rounded text-amber-300 bg-amber-500/10">Checking...</span>
+          <span id="tunnelStatusBadge" onclick="openSettingsModal()" class="font-medium px-2 py-0.5 rounded text-amber-300 bg-amber-500/10 cursor-pointer">Checking...</span>
           <button onclick="toggleTunnel()" id="tunnelToggleBtn" class="text-slate-400 hover:text-white underline">Toggle</button>
         </div>
 
@@ -235,6 +235,15 @@
           <h3 class="text-base font-bold text-white">Tunnel & Domain Settings</h3>
         </div>
         <button onclick="closeSettingsModal()" class="text-slate-400 hover:text-white text-lg">&times;</button>
+      </div>
+
+      <!-- Tunnel Notice / Error Alert -->
+      <div id="tunnelErrorAlert" class="hidden p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs">
+        <div class="flex items-center gap-2 font-bold mb-1">
+          <i class="fa-solid fa-circle-exclamation text-rose-400"></i>
+          <span>Tunnel Notice:</span>
+        </div>
+        <p id="tunnelErrorText" class="text-[11px] font-mono break-all"></p>
       </div>
 
       <div class="space-y-4 text-xs">
@@ -648,21 +657,31 @@
 
       const tunnel = data.tunnel;
       const tBadge = document.getElementById('tunnelStatusBadge');
+      const errBox = document.getElementById('tunnelErrorAlert');
+      const errText = document.getElementById('tunnelErrorText');
+
+      if (tunnel.error_message && errBox && errText) {
+        errBox.classList.remove('hidden');
+        errText.innerText = tunnel.error_message;
+      } else if (errBox) {
+        errBox.classList.add('hidden');
+      }
+
       if (tunnel.status === 'connected') {
         tBadge.innerText = `${tunnel.provider.toUpperCase()} (Online)`;
-        tBadge.className = "font-medium px-2 py-0.5 rounded text-emerald-300 bg-emerald-500/10";
+        tBadge.className = "font-medium px-2 py-0.5 rounded text-emerald-300 bg-emerald-500/10 cursor-pointer";
       } else if (tunnel.status === 'connecting') {
         tBadge.innerText = "Connecting...";
-        tBadge.className = "font-medium px-2 py-0.5 rounded text-amber-300 bg-amber-500/10";
+        tBadge.className = "font-medium px-2 py-0.5 rounded text-amber-300 bg-amber-500/10 cursor-pointer";
       } else if (tunnel.status === 'not_configured') {
         tBadge.innerText = "Set Domain in Tunnel";
-        tBadge.className = "font-medium px-2 py-0.5 rounded text-amber-300 bg-amber-500/10";
+        tBadge.className = "font-medium px-2 py-0.5 rounded text-amber-300 bg-amber-500/10 cursor-pointer";
       } else if (tunnel.status === 'error') {
         tBadge.innerText = "Error (Click Tunnel)";
-        tBadge.className = "font-medium px-2 py-0.5 rounded text-rose-300 bg-rose-500/10";
+        tBadge.className = "font-medium px-2 py-0.5 rounded text-rose-300 bg-rose-500/10 cursor-pointer";
       } else {
         tBadge.innerText = "Offline";
-        tBadge.className = "font-medium px-2 py-0.5 rounded text-slate-400 bg-slate-800";
+        tBadge.className = "font-medium px-2 py-0.5 rounded text-slate-400 bg-slate-800 cursor-pointer";
       }
 
       const ftpBtn = document.getElementById('ftpToggleBtn');

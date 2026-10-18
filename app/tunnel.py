@@ -7,8 +7,21 @@ import time
 from typing import Optional
 from app.config import load_settings, save_settings
 
+def kill_orphan_ngrok():
+    """Kill any lingering orphan ngrok processes on Windows."""
+    if os.name == "nt":
+        try:
+            subprocess.run(
+                ["taskkill", "/F", "/IM", "ngrok.exe"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+        except Exception:
+            pass
+
 class TunnelManager:
-    """Manages ngrok and cloudflared tunnels."""
+    """Manages ngrok and cloudflared tunnels with automatic process cleanup."""
 
     def __init__(self, port: int):
         self.port = port
@@ -42,8 +55,13 @@ class TunnelManager:
                 self.error_message = "Please configure your Ngrok domain in Tunnel Settings."
                 return False
 
+            # Kill any old lingering ngrok processes holding the port or domain
+            kill_orphan_ngrok()
+            time.sleep(0.5)
+
             clean_domain = domain.replace("https://", "").replace("http://", "").strip().rstrip("/")
-            cmd = ["ngrok", "http", str(self.port), "--url", clean_domain, "--log=stdout"]
+            # Using --pooling-enabled prevents ERR_NGROK_334
+            cmd = ["ngrok", "http", str(self.port), "--url", clean_domain, "--pooling-enabled", "--log=stdout"]
             expected_url = f"https://{clean_domain}"
 
         elif self.provider == "cloudflare_token":
@@ -96,7 +114,7 @@ class TunnelManager:
             if self.process.poll() is not None:
                 self.status = "error"
                 if not self.error_message:
-                    self.error_message = f"Tunnel process exited with code {self.process.returncode}"
+                    self.error_message = f"Tunnel exited with code {self.process.returncode}"
                 return False
             time.sleep(0.3)
 
@@ -159,13 +177,17 @@ class TunnelManager:
         if self.process:
             try:
                 self.process.terminate()
-                self.process.wait(timeout=3)
+                self.process.wait(timeout=2)
             except Exception:
                 try:
                     self.process.kill()
                 except Exception:
                     pass
             self.process = None
+
+        if self.provider == "ngrok":
+            kill_orphan_ngrok()
+
         self.public_url = None
         self.status = "stopped"
 
