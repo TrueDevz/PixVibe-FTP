@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LocalFTP - Direct High-Speed 30GB+ Transfer</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <style>
+    @keyframes pulse-slow {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.8; transform: scale(1.02); }
+    }
+    .pulse-glow {
+      box-shadow: 0 0 25px rgba(59, 130, 246, 0.4);
+    }
+    .custom-scroll::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    .custom-scroll::-webkit-scrollbar-thumb {
+      background: #334155;
+      border-radius: 4px;
+    }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen font-sans flex flex-col selection:bg-blue-600 selection:text-white">
+
+  <!-- Header -->
+  <header class="border-b border-slate-800 bg-slate-900/60 backdrop-blur sticky top-0 z-40">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex flex-wrap items-center justify-between gap-4">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center shadow-lg shadow-blue-500/30">
+          <i class="fa-solid fa-bolt text-xl text-white"></i>
+        </div>
+        <div>
+          <h1 class="text-xl font-bold tracking-tight bg-gradient-to-r from-white via-slate-200 to-blue-400 bg-clip-text text-transparent">LocalFTP</h1>
+          <p class="text-xs text-slate-400">Direct PC-to-PC Large File Transmitter (~30GB+ Ready)</p>
+        </div>
+      </div>
+
+      <!-- Real-time Status Badges -->
+      <div class="flex flex-wrap items-center gap-3">
+        <!-- Live Speed -->
+        <div class="flex items-center gap-2 bg-slate-800/80 border border-slate-700/80 px-3.5 py-1.5 rounded-lg text-xs">
+          <span class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping"></span>
+          <span class="text-slate-400">Speed:</span>
+          <span id="headerTotalSpeed" class="font-mono font-semibold text-emerald-400 text-sm">0.0 MB/s</span>
+        </div>
+
+        <!-- Tunnel Status -->
+        <div class="flex items-center gap-2 bg-slate-800/80 border border-slate-700/80 px-3.5 py-1.5 rounded-lg text-xs">
+          <i class="fa-solid fa-globe text-blue-400"></i>
+          <span class="text-slate-400">Internet Tunnel:</span>
+          <span id="tunnelStatusBadge" class="font-medium px-2 py-0.5 rounded text-amber-300 bg-amber-500/10">Checking...</span>
+          <button onclick="toggleTunnel()" id="tunnelToggleBtn" class="ml-1 text-slate-400 hover:text-white text-xs underline">Toggle</button>
+        </div>
+
+        <!-- Local IP -->
+        <div class="flex items-center gap-2 bg-slate-800/80 border border-slate-700/80 px-3.5 py-1.5 rounded-lg text-xs">
+          <i class="fa-solid fa-wifi text-indigo-400"></i>
+          <span class="text-slate-400">LAN IP:</span>
+          <span class="font-mono text-slate-200">{{ local_ip }}:{{ port }}</span>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Content Area -->
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 py-8 flex-1 w-full space-y-8">
+
+    <!-- Active Transfers Monitor (Hero when downloads are running) -->
+    <div id="liveTransfersContainer" class="hidden">
+      <div class="bg-gradient-to-r from-blue-900/30 via-slate-900 to-indigo-950/30 border border-blue-500/40 rounded-2xl p-6 shadow-2xl relative overflow-hidden">
+        <div class="flex items-center justify-between mb-4">
+          <div class="flex items-center gap-3">
+            <span class="flex h-3 w-3 relative">
+              <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
+              <span class="relative inline-flex rounded-full h-3 w-3 bg-blue-500"></span>
+            </span>
+            <h2 class="text-lg font-bold text-white">Live Active Transfers (Streaming from your Hard Disk)</h2>
+          </div>
+          <span id="activeDownloadsCount" class="text-xs bg-blue-500/20 text-blue-300 border border-blue-500/30 px-3 py-1 rounded-full font-mono">
+            0 active
+          </span>
+        </div>
+
+        <div id="activeTransfersList" class="space-y-4">
+          <!-- Populated by JS -->
+        </div>
+      </div>
+    </div>
+
+    <!-- File Sharing Section -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+      
+      <!-- Left Column: Add / Select File Card -->
+      <div class="lg:col-span-1 space-y-6">
+        <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-6 shadow-xl relative backdrop-blur">
+          <h2 class="text-lg font-bold text-white mb-1 flex items-center gap-2">
+            <i class="fa-solid fa-folder-open text-blue-400"></i> Share Any Large File
+          </h2>
+          <p class="text-xs text-slate-400 mb-6">
+            Supports 10GB, 30GB, 100GB+ files. Streams directly from your PC without uploading to cloud.
+          </p>
+
+          <!-- Browse Button -->
+          <div class="space-y-4">
+            <button 
+              onclick="triggerFilePicker()" 
+              id="browseBtn"
+              class="w-full py-4 px-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white rounded-xl font-medium text-sm flex items-center justify-center gap-3 transition-all transform active:scale-95 shadow-lg shadow-blue-600/30 cursor-pointer">
+              <i class="fa-solid fa-desktop text-lg"></i>
+              <span>Choose 30GB File from PC...</span>
+            </button>
+            <p class="text-[11px] text-center text-slate-400">Opens native Windows file browser</p>
+
+            <!-- Selected File Display Card -->
+            <div id="selectedFileCard" class="hidden bg-slate-950/80 border border-slate-700/80 rounded-xl p-4 space-y-3">
+              <div class="flex items-start gap-3">
+                <i class="fa-solid fa-file-zipper text-2xl text-blue-400 mt-1"></i>
+                <div class="overflow-hidden flex-1">
+                  <p id="selFileName" class="text-sm font-semibold text-slate-200 truncate">file.zip</p>
+                  <p id="selFileSize" class="text-xs font-mono text-emerald-400">31.42 GB</p>
+                  <p id="selFilePath" class="text-[11px] font-mono text-slate-400 truncate mt-1">L:\Path\file.zip</p>
+                </div>
+              </div>
+
+              <!-- Optional Password -->
+              <div>
+                <label class="block text-xs text-slate-400 mb-1">Optional Password:</label>
+                <input 
+                  type="text" 
+                  id="sharePassword" 
+                  placeholder="Leave empty for public link"
+                  class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-blue-500 font-mono"
+                >
+              </div>
+
+              <!-- Start Sharing Button -->
+              <button 
+                onclick="submitShare()" 
+                id="shareSubmitBtn"
+                class="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold flex items-center justify-center gap-2 transition-all">
+                <i class="fa-solid fa-share-nodes"></i>
+                <span>Generate Internet Download Link</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Feature Highlights -->
+          <div class="mt-6 pt-6 border-t border-slate-800 space-y-3 text-xs text-slate-400">
+            <div class="flex items-center gap-2">
+              <i class="fa-solid fa-circle-check text-emerald-400"></i>
+              <span><strong>Resume Supported:</strong> IDM / Browser can pause & resume</span>
+            </div>
+            <div class="flex items-center gap-2">
+              <i class="fa-solid fa-circle-check text-emerald-400"></i>
+              <span><strong>Direct P2P Speed:</strong> Full ISP upload / download bandwidth</span>
+            </div>
+            <div class="flex items-center gap-2">
+              <i class="fa-solid fa-circle-check text-emerald-400"></i>
+              <span><strong>Zero Cloud Storage:</strong> Doesn't touch Google Drive or cloud</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Optional Classic FTP Server Card -->
+        <div class="bg-slate-900/60 border border-slate-800 rounded-2xl p-5 text-xs space-y-3">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <i class="fa-solid fa-network-wired text-indigo-400"></i>
+              <span class="font-semibold text-slate-200">Classic FTP Server</span>
+            </div>
+            <button onclick="toggleFTP()" id="ftpToggleBtn" class="px-2.5 py-1 rounded bg-slate-800 text-slate-300 hover:text-white border border-slate-700 text-xs">
+              Start FTP
+            </button>
+          </div>
+          <p class="text-slate-400">
+            Port: <span class="font-mono text-slate-300">2121</span> | Connect using FileZilla or Android File Manager.
+          </p>
+        </div>
+      </div>
+
+      <!-- Right Column: Active Shared Links Table -->
+      <div class="lg:col-span-2 space-y-4">
+        <div class="flex items-center justify-between">
+          <h2 class="text-lg font-bold text-white flex items-center gap-2">
+            <i class="fa-solid fa-link text-blue-400"></i> Active Download Links
+          </h2>
+          <span id="activeSharesCount" class="text-xs text-slate-400">0 files shared</span>
+        </div>
+
+        <div id="sharesListContainer" class="space-y-4">
+          <!-- Populated dynamically -->
+          <div id="noSharesPrompt" class="bg-slate-900/40 border border-dashed border-slate-800 rounded-2xl p-12 text-center text-slate-400 space-y-3">
+            <i class="fa-solid fa-cloud-arrow-up text-4xl text-slate-600"></i>
+            <p class="text-sm font-medium text-slate-300">No files being shared right now.</p>
+            <p class="text-xs text-slate-400 max-w-sm mx-auto">
+              Click "Choose 30GB File from PC" to select any video, zip, or dataset from your drive and generate an instant download link for the other person!
+            </p>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </main>
+
+  <!-- QR Code Modal -->
+  <div id="qrModal" class="hidden fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 max-w-sm w-full text-center space-y-4 shadow-2xl">
+      <div class="flex justify-between items-center">
+        <h3 class="text-sm font-bold text-white">Scan to Download on Mobile</h3>
+        <button onclick="closeQrModal()" class="text-slate-400 hover:text-white text-lg">&times;</button>
+      </div>
+      <div class="bg-white p-4 rounded-xl inline-block shadow-inner">
+        <img id="qrCodeImage" src="" alt="QR Code" class="w-48 h-48 mx-auto">
+      </div>
+      <p id="qrUrlText" class="text-xs font-mono text-slate-400 break-all select-all"></p>
+      <button onclick="closeQrModal()" class="w-full py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-semibold">
+        Close
+      </button>
+    </div>
+  </div>
+
+  <!-- Toast Notification -->
+  <div id="toast" class="fixed bottom-6 right-6 bg-blue-600 text-white px-4 py-2.5 rounded-xl shadow-2xl text-xs font-medium transform translate-y-24 opacity-0 transition-all duration-300 flex items-center gap-2 z-50">
+    <i class="fa-solid fa-circle-check"></i>
+    <span id="toastMessage">Copied to clipboard!</span>
+  </div>
+
+  <script>
+    let currentSelectedFile = null;
+    let ws = null;
+
+    // Toast notification
+    function showToast(msg) {
+      const toast = document.getElementById('toast');
+      document.getElementById('toastMessage').innerText = msg;
+      toast.classList.remove('translate-y-24', 'opacity-0');
+      setTimeout(() => {
+        toast.classList.add('translate-y-24', 'opacity-0');
+      }, 2500);
+    }
+
+    // Copy to clipboard
+    function copyText(text) {
+      navigator.clipboard.writeText(text).then(() => {
+        showToast("Link copied to clipboard! Send it to the recipient.");
+      });
+    }
+
+    // Trigger native file picker
+    async function triggerFilePicker() {
+      const btn = document.getElementById('browseBtn');
+      btn.disabled = true;
+      btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i><span>Waiting for file selection...</span>`;
+
+      try {
+        const res = await fetch('/api/select-file', { method: 'POST' });
+        const data = await res.json();
+        if (data.status === 'selected') {
+          currentSelectedFile = data;
+          document.getElementById('selFileName').innerText = data.file_name;
+          document.getElementById('selFileSize').innerText = data.formatted_size;
+          document.getElementById('selFilePath').innerText = data.file_path;
+          document.getElementById('selectedFileCard').classList.remove('hidden');
+        }
+      } catch (err) {
+        alert("Could not open file picker: " + err);
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = `<i class="fa-solid fa-desktop text-lg"></i><span>Choose 30GB File from PC...</span>`;
+      }
+    }
+
+    // Submit Share
+    async function submitShare() {
+      if (!currentSelectedFile) return;
+      const pass = document.getElementById('sharePassword').value;
+      const btn = document.getElementById('shareSubmitBtn');
+      btn.disabled = true;
+      btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Generating Link & Starting Tunnel...`;
+
+      try {
+        const res = await fetch('/api/share', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            file_path: currentSelectedFile.file_path,
+            password: pass,
+            enable_tunnel: true
+          })
+        });
+        const data = await res.json();
+        showToast("Share link created successfully!");
+        document.getElementById('selectedFileCard').classList.add('hidden');
+        document.getElementById('sharePassword').value = '';
+        currentSelectedFile = null;
+      } catch (err) {
+        alert("Failed to share file: " + err);
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = `<i class="fa-solid fa-share-nodes"></i><span>Generate Internet Download Link</span>`;
+      }
+    }
+
+    // Delete Share
+    async function deleteShare(token) {
+      if (!confirm("Stop sharing this file? The download link will become inactive.")) return;
+      try {
+        await fetch(`/api/shares/${token}`, { method: 'DELETE' });
+        showToast("Share stopped.");
+      } catch (err) {
+        alert("Error stopping share: " + err);
+      }
+    }
+
+    // Toggle Cloudflare Tunnel
+    async function toggleTunnel() {
+      const btn = document.getElementById('tunnelToggleBtn');
+      btn.innerText = "Switching...";
+      await fetch('/api/tunnel/toggle', { method: 'POST' });
+    }
+
+    // Toggle FTP
+    async function toggleFTP() {
+      await fetch('/api/ftp/toggle', { method: 'POST' });
+    }
+
+    // Show QR Modal
+    function showQr(token, url) {
+      document.getElementById('qrCodeImage').src = `/d/${token}/qr?url=${encodeURIComponent(url)}`;
+      document.getElementById('qrUrlText').innerText = url;
+      document.getElementById('qrModal').classList.remove('hidden');
+    }
+
+    function closeQrModal() {
+      document.getElementById('qrModal').classList.add('hidden');
+    }
+
+    // WebSocket connection for live telemetry
+    function connectWS() {
+      const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      ws = new WebSocket(`${proto}//${window.location.host}/ws`);
+
+      ws.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        renderDashboard(data);
+      };
+
+      ws.onclose = () => {
+        setTimeout(connectWS, 2000);
+      };
+    }
+
+    function renderDashboard(data) {
+      // 1. Total Speed
+      document.getElementById('headerTotalSpeed').innerText = `${data.total_speed_mbps} MB/s`;
+
+      // 2. Tunnel Badge
+      const tunnel = data.tunnel;
+      const tBadge = document.getElementById('tunnelStatusBadge');
+      if (tunnel.status === 'connected') {
+        tBadge.innerText = "Online (Ready)";
+        tBadge.className = "font-medium px-2 py-0.5 rounded text-emerald-300 bg-emerald-500/10";
+      } else if (tunnel.status === 'connecting') {
+        tBadge.innerText = "Connecting...";
+        tBadge.className = "font-medium px-2 py-0.5 rounded text-amber-300 bg-amber-500/10";
+      } else {
+        tBadge.innerText = "Offline";
+        tBadge.className = "font-medium px-2 py-0.5 rounded text-rose-300 bg-rose-500/10";
+      }
+
+      // 3. FTP Button
+      const ftpBtn = document.getElementById('ftpToggleBtn');
+      if (data.ftp.is_running) {
+        ftpBtn.innerText = "Stop FTP";
+        ftpBtn.className = "px-2.5 py-1 rounded bg-rose-600/20 text-rose-300 border border-rose-500/40 text-xs";
+      } else {
+        ftpBtn.innerText = "Start FTP";
+        ftpBtn.className = "px-2.5 py-1 rounded bg-slate-800 text-slate-300 hover:text-white border border-slate-700 text-xs";
+      }
+
+      // 4. Live Transfers Hero
+      const liveContainer = document.getElementById('liveTransfersContainer');
+      const activeList = document.getElementById('activeTransfersList');
+      if (data.active_transfers && data.active_transfers.length > 0) {
+        liveContainer.classList.remove('hidden');
+        document.getElementById('activeDownloadsCount').innerText = `${data.active_transfers.length} active download(s)`;
+
+        activeList.innerHTML = data.active_transfers.map(tr => `
+          <div class="bg-slate-900/90 border border-slate-700/80 rounded-xl p-4 space-y-2">
+            <div class="flex flex-wrap items-center justify-between gap-2 text-xs">
+              <div class="flex items-center gap-2">
+                <i class="fa-solid fa-arrow-down-long text-emerald-400"></i>
+                <span class="font-semibold text-white">${tr.file_name}</span>
+                <span class="text-slate-400 font-mono">(${tr.client_ip})</span>
+              </div>
+              <div class="flex items-center gap-4 font-mono">
+                <span class="text-emerald-400 font-bold text-sm">${tr.speed_mbps} MB/s</span>
+                <span class="text-slate-300">${tr.current_gb} GB / ${tr.total_gb} GB</span>
+                <span class="text-blue-400 font-bold">${tr.percentage}%</span>
+              </div>
+            </div>
+            <!-- Progress Bar -->
+            <div class="w-full bg-slate-800 rounded-full h-2.5 overflow-hidden">
+              <div class="bg-gradient-to-r from-blue-500 to-emerald-400 h-2.5 rounded-full transition-all duration-300" style="width: ${tr.percentage}%"></div>
+            </div>
+          </div>
+        `).join('');
+      } else {
+        liveContainer.classList.add('hidden');
+        activeList.innerHTML = '';
+      }
+
+      // 5. Active Shares List
+      const shares = data.shares || [];
+      document.getElementById('activeSharesCount').innerText = `${shares.length} file(s) shared`;
+      const sharesContainer = document.getElementById('sharesListContainer');
+
+      if (shares.length === 0) {
+        sharesContainer.innerHTML = `
+          <div id="noSharesPrompt" class="bg-slate-900/40 border border-dashed border-slate-800 rounded-2xl p-12 text-center text-slate-400 space-y-3">
+            <i class="fa-solid fa-cloud-arrow-up text-4xl text-slate-600"></i>
+            <p class="text-sm font-medium text-slate-300">No files being shared right now.</p>
+            <p class="text-xs text-slate-400 max-w-sm mx-auto">
+              Click "Choose 30GB File from PC" to select any video, zip, or dataset from your drive and generate an instant download link for the other person!
+            </p>
+          </div>
+        `;
+        return;
+      }
+
+      sharesContainer.innerHTML = shares.map(s => {
+        const mainUrl = s.public_url || s.local_url;
+        return `
+          <div class="bg-slate-900/80 border border-slate-800 rounded-2xl p-5 shadow-lg space-y-4 hover:border-slate-700 transition-all">
+            <!-- File Info Header -->
+            <div class="flex items-start justify-between gap-4">
+              <div class="flex items-center gap-3 overflow-hidden">
+                <div class="w-10 h-10 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center shrink-0">
+                  <i class="fa-solid fa-file-lines text-blue-400 text-lg"></i>
+                </div>
+                <div class="overflow-hidden">
+                  <h3 class="font-bold text-white text-sm truncate" title="${s.file_name}">${s.file_name}</h3>
+                  <div class="flex items-center gap-3 text-xs text-slate-400 font-mono mt-0.5">
+                    <span class="text-emerald-400 font-semibold">${s.formatted_size}</span>
+                    <span>•</span>
+                    <span>Downloads: ${s.download_count}</span>
+                    <span>•</span>
+                    <span>Uploaded: ${s.total_bytes_sent_gb} GB</span>
+                    ${s.password_protected ? '<span class="text-amber-400"><i class="fa-solid fa-lock text-[10px]"></i> Protected</span>' : ''}
+                  </div>
+                </div>
+              </div>
+              <button onclick="deleteShare('${s.token}')" class="text-slate-400 hover:text-rose-400 text-xs px-2.5 py-1.5 rounded-lg border border-slate-800 hover:border-rose-500/30 transition-all shrink-0">
+                <i class="fa-solid fa-trash-can mr-1"></i> Stop Sharing
+              </button>
+            </div>
+
+            <!-- Share Links -->
+            <div class="space-y-2 pt-2 border-t border-slate-800/80 text-xs">
+              ${s.public_url ? `
+                <!-- Internet Link -->
+                <div class="flex items-center justify-between gap-2 bg-slate-950/60 border border-blue-900/40 rounded-xl p-2.5">
+                  <div class="flex items-center gap-2 overflow-hidden">
+                    <span class="px-2 py-0.5 rounded bg-blue-500/20 text-blue-400 font-semibold text-[10px] shrink-0">
+                      🌐 INTERNET LINK
+                    </span>
+                    <span class="font-mono text-slate-300 truncate">${s.public_url}</span>
+                  </div>
+                  <div class="flex items-center gap-2 shrink-0">
+                    <button onclick="copyText('${s.public_url}')" class="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-medium flex items-center gap-1.5 transition-all">
+                      <i class="fa-solid fa-copy"></i> Copy Link
+                    </button>
+                    <button onclick="showQr('${s.token}', '${s.public_url}')" class="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300">
+                      <i class="fa-solid fa-qrcode"></i>
+                    </button>
+                  </div>
+                </div>
+              ` : `
+                <!-- Tunnel Starting Notice -->
+                <div class="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-300 flex items-center justify-between">
+                  <span>Starting Cloudflare tunnel to generate Internet link...</span>
+                  <i class="fa-solid fa-spinner fa-spin"></i>
+                </div>
+              `}
+
+              <!-- Local Wi-Fi Link -->
+              <div class="flex items-center justify-between gap-2 bg-slate-950/30 border border-slate-800 rounded-xl p-2">
+                <div class="flex items-center gap-2 overflow-hidden">
+                  <span class="px-2 py-0.5 rounded bg-slate-800 text-slate-400 font-semibold text-[10px] shrink-0">
+                    📶 LOCAL WI-FI
+                  </span>
+                  <span class="font-mono text-slate-400 truncate">${s.local_url}</span>
+                </div>
+                <button onclick="copyText('${s.local_url}')" class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 shrink-0">
+                  <i class="fa-solid fa-copy"></i> Copy
+                </button>
+              </div>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    // Initialize
+    window.addEventListener('DOMContentLoaded', () => {
+      connectWS();
+    });
+  </script>
+</body>
+</html>

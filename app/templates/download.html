@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Download {{ file_name }} - LocalFTP</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex items-center justify-center p-4 font-sans selection:bg-blue-600 selection:text-white">
+
+  <div class="max-w-lg w-full bg-slate-900 border border-slate-800 rounded-3xl p-8 shadow-2xl space-y-6 relative overflow-hidden backdrop-blur">
+    
+    <!-- Decorative background glow -->
+    <div class="absolute -top-24 -right-24 w-48 h-48 bg-blue-600/20 rounded-full blur-3xl pointer-events-none"></div>
+    <div class="absolute -bottom-24 -left-24 w-48 h-48 bg-indigo-600/20 rounded-full blur-3xl pointer-events-none"></div>
+
+    <!-- Header / Logo -->
+    <div class="flex items-center justify-between border-b border-slate-800/80 pb-4">
+      <div class="flex items-center gap-3">
+        <div class="w-8 h-8 rounded-lg bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center shadow-md shadow-blue-500/20">
+          <i class="fa-solid fa-bolt text-sm text-white"></i>
+        </div>
+        <span class="font-bold text-sm tracking-wide text-slate-200">LocalFTP Direct Share</span>
+      </div>
+      <span class="text-[11px] font-medium text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1 rounded-full flex items-center gap-1.5">
+        <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span> Host Online
+      </span>
+    </div>
+
+    <!-- Password Prompt if protected and not authenticated -->
+    {% if requires_password and not is_authenticated %}
+      <div class="space-y-4 py-4 text-center">
+        <div class="w-16 h-16 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center mx-auto text-amber-400 text-2xl shadow-inner">
+          <i class="fa-solid fa-lock"></i>
+        </div>
+        <div>
+          <h2 class="text-lg font-bold text-white">Password Protected File</h2>
+          <p class="text-xs text-slate-400 mt-1">Please enter the security passkey provided by the sender to access this file.</p>
+        </div>
+        <form method="GET" action="/d/{{ token }}" class="space-y-3">
+          <input 
+            type="password" 
+            name="key" 
+            required 
+            placeholder="Enter password..." 
+            class="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-3 text-sm text-center text-slate-200 focus:outline-none focus:border-blue-500 font-mono"
+          >
+          <button type="submit" class="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold uppercase tracking-wider transition-all">
+            Unlock File
+          </button>
+        </form>
+      </div>
+
+    {% else %}
+
+      <!-- File Details Card -->
+      <div class="space-y-4">
+        <div class="flex items-start gap-4 bg-slate-950/60 border border-slate-800/80 rounded-2xl p-5">
+          <div class="w-14 h-14 rounded-2xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400 text-2xl shrink-0 shadow-lg">
+            <i class="fa-solid fa-file-zipper"></i>
+          </div>
+          <div class="overflow-hidden flex-1">
+            <h1 class="text-base font-bold text-white break-words" title="{{ file_name }}">{{ file_name }}</h1>
+            <div class="flex items-center gap-3 text-xs text-slate-400 font-mono mt-1">
+              <span class="text-emerald-400 font-bold text-sm">{{ formatted_size }}</span>
+              <span>•</span>
+              <span class="text-slate-400">Direct Disk Stream</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Download Buttons -->
+        {% set download_url = "/d/" ~ token ~ "/download" ~ ("?key=" ~ provided_key if provided_key else "") %}
+        
+        <div class="space-y-3 pt-2">
+          <!-- Primary Download Button -->
+          <a 
+            href="{{ download_url }}" 
+            id="downloadBtn"
+            class="w-full py-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white rounded-2xl font-bold text-sm flex items-center justify-center gap-3 shadow-xl shadow-blue-600/30 transition-all transform active:scale-95 cursor-pointer block text-center">
+            <i class="fa-solid fa-cloud-arrow-down text-lg"></i>
+            <span>Download File ({{ formatted_size }})</span>
+          </a>
+
+          <!-- Copy Direct Link for IDM / Download Managers -->
+          <button 
+            onclick="copyDirectUrl()" 
+            class="w-full py-3 bg-slate-800 hover:bg-slate-700/80 text-slate-300 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 border border-slate-700 transition-all">
+            <i class="fa-solid fa-link"></i>
+            <span>Copy Direct Link for IDM / Download Managers</span>
+          </button>
+        </div>
+
+        <!-- Accelerator Tip -->
+        <div class="bg-blue-950/30 border border-blue-800/30 rounded-xl p-3.5 text-xs text-slate-300 space-y-1.5">
+          <div class="flex items-center gap-2 font-semibold text-blue-400">
+            <i class="fa-solid fa-circle-info"></i>
+            <span>Fast Download & Resume Info:</span>
+          </div>
+          <p class="text-[11px] text-slate-400 leading-relaxed">
+            This download supports <strong>HTTP Resume</strong>. You can pause and resume anytime in your browser, or paste the link into <strong>IDM, FDM, or Aria2</strong> for multi-threaded maximum speeds!
+          </p>
+        </div>
+
+      </div>
+
+    {% endif %}
+
+    <!-- Footer Security Notice -->
+    <div class="flex items-center justify-between text-[11px] text-slate-400 border-t border-slate-800/60 pt-4">
+      <span class="flex items-center gap-1.5">
+        <i class="fa-solid fa-shield-halved text-emerald-400"></i> Direct Host-to-Client Stream
+      </span>
+      <span>No Cloud Storage Limit</span>
+    </div>
+
+  </div>
+
+  <!-- Toast -->
+  <div id="toast" class="fixed bottom-6 right-6 bg-blue-600 text-white px-4 py-2.5 rounded-xl shadow-2xl text-xs font-medium transform translate-y-24 opacity-0 transition-all duration-300 flex items-center gap-2 z-50">
+    <i class="fa-solid fa-circle-check"></i>
+    <span>Direct download link copied to clipboard!</span>
+  </div>
+
+  <script>
+    function copyDirectUrl() {
+      const fullUrl = window.location.origin + "{{ download_url }}";
+      navigator.clipboard.writeText(fullUrl).then(() => {
+        const toast = document.getElementById('toast');
+        toast.classList.remove('translate-y-24', 'opacity-0');
+        setTimeout(() => toast.classList.add('translate-y-24', 'opacity-0'), 2500);
+      });
+    }
+  </script>
+</body>
+</html>
