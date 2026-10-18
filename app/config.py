@@ -4,11 +4,36 @@ import socket
 from pathlib import Path
 from typing import Optional
 
-BASE_DIR = Path(__file__).resolve().parent.parent
-APP_DIR = Path(__file__).resolve().parent
-STATIC_DIR = APP_DIR / "static"
-TEMPLATES_DIR = APP_DIR / "templates"
+import sys
+
+if getattr(sys, "frozen", False):
+    # PyInstaller bundle directory for internal assets (templates, static)
+    BUNDLE_DIR = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
+    APP_DIR = BUNDLE_DIR / "app"
+    STATIC_DIR = APP_DIR / "static"
+    TEMPLATES_DIR = APP_DIR / "templates"
+    
+    # Persistent writable directory for settings and history
+    EXE_DIR = Path(sys.executable).parent
+    try:
+        # Check if EXE_DIR is writable (e.g. portable mode)
+        test_file = EXE_DIR / ".write_test"
+        test_file.touch()
+        test_file.unlink()
+        BASE_DIR = EXE_DIR
+    except Exception:
+        # Fall back to %APPDATA%\PixVibeFTP if installed in Program Files
+        BASE_DIR = Path(os.environ.get("APPDATA", str(Path.home()))) / "PixVibeFTP"
+        BASE_DIR.mkdir(parents=True, exist_ok=True)
+else:
+    BASE_DIR = Path(__file__).resolve().parent.parent
+    APP_DIR = Path(__file__).resolve().parent
+    STATIC_DIR = APP_DIR / "static"
+    TEMPLATES_DIR = APP_DIR / "templates"
+
 CONFIG_FILE = BASE_DIR / "settings.json"
+BIN_DIR = BASE_DIR / "bin"
+BIN_DIR.mkdir(parents=True, exist_ok=True)
 
 DEFAULT_PORT = 8000
 CHUNK_SIZE = 1024 * 1024  # 1 MB chunk buffer
@@ -16,6 +41,7 @@ CHUNK_SIZE = 1024 * 1024  # 1 MB chunk buffer
 DEFAULT_SETTINGS = {
     "tunnel_provider": "ngrok",  # "ngrok", "cloudflare_quick", or "cloudflare_token"
     "ngrok_domain": "unmobbed-corrina-mustily.ngrok-free.dev",
+    "ngrok_authtoken": "",
     "cf_tunnel_token": "",
     "cf_custom_domain": "",
 }

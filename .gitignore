@@ -5,4 +5,10 @@ __pycache__/
 *.log
 .vscode/
 .idea/
+build/
+dist/
+dist_installer/
+bin/
 test_sample.*
+settings.json
+history.json

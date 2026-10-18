@@ -1,11 +1,103 @@
 import atexit
+import io
 import os
 import re
+import shutil
 import subprocess
 import threading
 import time
-from typing import Optional
-from app.config import load_settings, save_settings
+import urllib.request
+import zipfile
+from pathlib import Path
+from typing import Dict, Optional
+
+from app.config import BASE_DIR, BIN_DIR, load_settings, save_settings
+
+NGROK_ZIP_URL = "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip"
+CLOUDFLARED_EXE_URL = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe"
+
+def find_tunnel_binary(tool_name: str) -> Optional[str]:
+    """Find the path to the requested tunnel binary (ngrok or cloudflared)."""
+    exe_name = f"{tool_name}.exe" if os.name == "nt" else tool_name
+
+    # 1. Check in BIN_DIR
+    p = BIN_DIR / exe_name
+    if p.is_file():
+        return str(p)
+
+    # 2. Check next to app / executable
+    p2 = BASE_DIR / exe_name
+    if p2.is_file():
+        return str(p2)
+
+    # 3. Check system PATH
+    found = shutil.which(tool_name) or shutil.which(exe_name)
+    if found:
+        return found
+
+    # 4. Windows specific common install locations
+    if os.name == "nt":
+        candidates = [
+            Path(os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\WindowsApps")) / exe_name,
+            Path(os.path.expandvars(r"%LOCALAPPDATA%\Programs\ngrok")) / exe_name,
+            Path(r"C:\Program Files (x86)\cloudflared") / exe_name,
+            Path(r"C:\Program Files\cloudflared") / exe_name,
+        ]
+        for c in candidates:
+            if c.is_file():
+                return str(c)
+
+    return None
+
+def download_tunnel_tool(tool_name: str) -> dict:
+    """Download and extract ngrok or cloudflared into BIN_DIR."""
+    BIN_DIR.mkdir(parents=True, exist_ok=True)
+    target_exe = BIN_DIR / f"{tool_name}.exe"
+
+    headers = {"User-Agent": "PixVibeFTP/1.0"}
+
+    try:
+        if tool_name == "ngrok":
+            req = urllib.request.Request(NGROK_ZIP_URL, headers=headers)
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                data = resp.read()
+            with zipfile.ZipFile(io.BytesIO(data)) as zf:
+                for member in zf.namelist():
+                    if member.endswith("ngrok.exe") or member == "ngrok.exe":
+                        with zf.open(member) as src, open(target_exe, "wb") as dst:
+                            shutil.copyfileobj(src, dst)
+                        break
+            if not target_exe.is_file():
+                return {"success": False, "error": "ngrok.exe not found inside downloaded archive"}
+            return {"success": True, "path": str(target_exe)}
+
+        elif tool_name == "cloudflared":
+            req = urllib.request.Request(CLOUDFLARED_EXE_URL, headers=headers)
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                with open(target_exe, "wb") as dst:
+                    shutil.copyfileobj(resp, dst)
+            if not target_exe.is_file():
+                return {"success": False, "error": "Failed to save cloudflared.exe"}
+            return {"success": True, "path": str(target_exe)}
+
+        else:
+            return {"success": False, "error": f"Unknown tool: {tool_name}"}
+
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+def get_tools_status() -> Dict[str, dict]:
+    """Check if tunnel tools are installed and return their status."""
+    return {
+        "ngrok": {
+            "installed": find_tunnel_binary("ngrok") is not None,
+            "path": find_tunnel_binary("ngrok"),
+        },
+        "cloudflared": {
+            "installed": find_tunnel_binary("cloudflared") is not None,
+            "path": find_tunnel_binary("cloudflared"),
+        },
+    }
 
 def kill_orphan_ngrok():
     """Kill any lingering orphan ngrok processes on Windows."""
@@ -21,7 +113,7 @@ def kill_orphan_ngrok():
             pass
 
 class TunnelManager:
-    """Manages ngrok and cloudflared tunnels with automatic process cleanup."""
+    """Manages ngrok and cloudflared tunnels with automatic binary discovery and process cleanup."""
 
     def __init__(self, port: int):
         self.port = port
@@ -49,36 +141,65 @@ class TunnelManager:
         expected_url = None
 
         if self.provider == "ngrok":
+            binary = find_tunnel_binary("ngrok")
+            if not binary:
+                self.status = "error"
+                self.error_message = "ngrok.exe not found. Click 'Auto-Download Ngrok' in Tunnel Settings."
+                return False
+
             domain = settings.get("ngrok_domain", "").strip()
             if not domain:
                 self.status = "not_configured"
                 self.error_message = "Please configure your Ngrok domain in Tunnel Settings."
                 return False
 
-            # Kill any old lingering ngrok processes holding the port or domain
+            authtoken = settings.get("ngrok_authtoken", "").strip()
+            if authtoken:
+                try:
+                    subprocess.run(
+                        [binary, "config", "add-authtoken", authtoken],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+                    )
+                except Exception:
+                    pass
+
             kill_orphan_ngrok()
             time.sleep(0.5)
 
             clean_domain = domain.replace("https://", "").replace("http://", "").strip().rstrip("/")
-            # Using --pooling-enabled prevents ERR_NGROK_334
-            cmd = ["ngrok", "http", str(self.port), "--url", clean_domain, "--pooling-enabled", "--log=stdout"]
+            cmd = [binary, "http", str(self.port), "--url", clean_domain, "--pooling-enabled", "--log=stdout"]
             expected_url = f"https://{clean_domain}"
 
         elif self.provider == "cloudflare_token":
+            binary = find_tunnel_binary("cloudflared")
+            if not binary:
+                self.status = "error"
+                self.error_message = "cloudflared.exe not found. Click 'Auto-Download Cloudflared' in Tunnel Settings."
+                return False
+
             token = settings.get("cf_tunnel_token", "").strip()
             domain = settings.get("cf_custom_domain", "").strip()
             if not token:
                 self.status = "not_configured"
                 self.error_message = "Cloudflare Tunnel Token is required."
                 return False
+
             clean_domain = domain.replace("https://", "").replace("http://", "").strip().rstrip("/")
-            cmd = ["cloudflared", "tunnel", "run", "--token", token]
+            cmd = [binary, "tunnel", "run", "--token", token]
             expected_url = f"https://{clean_domain}" if clean_domain else None
 
         else:
             # cloudflare_quick
             self.provider = "cloudflare_quick"
-            cmd = ["cloudflared", "tunnel", "--url", f"http://127.0.0.1:{self.port}"]
+            binary = find_tunnel_binary("cloudflared")
+            if not binary:
+                self.status = "error"
+                self.error_message = "cloudflared.exe not found. Click 'Auto-Download Cloudflared' in Tunnel Settings."
+                return False
+
+            cmd = [binary, "tunnel", "--url", f"http://127.0.0.1:{self.port}"]
             expected_url = None
 
         try:
@@ -93,7 +214,7 @@ class TunnelManager:
         except FileNotFoundError:
             executable = cmd[0] if cmd else "tunnel"
             self.status = "error"
-            self.error_message = f"Executable '{executable}' not found in system PATH."
+            self.error_message = f"Executable '{executable}' could not be started."
             return False
         except Exception as e:
             self.status = "error"
@@ -200,5 +321,7 @@ class TunnelManager:
             "port": self.port,
             "provider": self.provider,
             "ngrok_domain": settings.get("ngrok_domain", ""),
+            "ngrok_authtoken": settings.get("ngrok_authtoken", ""),
             "cf_custom_domain": settings.get("cf_custom_domain", ""),
+            "tools": get_tools_status(),
         }

@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import List, Optional, Set
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 import qrcode
@@ -27,9 +27,11 @@ from app.transfer_manager import (
     get_content_type,
     transfer_manager,
 )
-from app.tunnel import TunnelManager
+from app.history import history_manager
+from app.tunnel import TunnelManager, download_tunnel_tool, get_tools_status
+from app.file_picker import pick_files, pick_folder
 
-app = FastAPI(title="LocalFTP - Direct High-Speed File Transfer")
+app = FastAPI(title="PixVibe FTP - Direct High-Speed File Transmitter")
 
 # Enable CORS for local network and tunnel access
 app.add_middleware(
@@ -44,6 +46,13 @@ app.add_middleware(
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    fav_path = STATIC_DIR / "favicon.ico"
+    if fav_path.exists():
+        return FileResponse(str(fav_path), media_type="image/x-icon")
+    return Response(status_code=404)
+
 # State
 tunnel_manager = TunnelManager(port=DEFAULT_PORT)
 active_websockets: Set[WebSocket] = set()
@@ -56,6 +65,67 @@ def format_public_link(base_url: Optional[str], token: str) -> Optional[str]:
         url += "?ngrok-skip-browser-warning=true"
     return url
 
+_short_url_cache: dict = {}
+
+def shorten_url_sync(long_url: Optional[str]) -> Optional[str]:
+    """Shorten public URL into clean, direct redirect without countdown or interstitial pages."""
+    if not long_url:
+        return None
+    if long_url in _short_url_cache:
+        return _short_url_cache[long_url]
+
+    if any(h in long_url for h in ["127.0.0.1", "localhost", "192.168.", "10."]):
+        return long_url
+
+    import json
+    import urllib.parse
+    import urllib.request
+
+    # Primary: spoo.me (Instant 302 redirect, no countdown, no interstitial page)
+    try:
+        data = urllib.parse.urlencode({"url": long_url}).encode("utf-8")
+        req = urllib.request.Request(
+            "https://spoo.me/",
+            data=data,
+            headers={"Accept": "application/json", "User-Agent": "PixVibeFTP/1.0"}
+        )
+        with urllib.request.urlopen(req, timeout=3.5) as resp:
+            res = json.loads(resp.read().decode("utf-8"))
+            short = res.get("short_url", "").replace("http://", "https://").strip()
+            if short.startswith("https://"):
+                _short_url_cache[long_url] = short
+                return short
+    except Exception:
+        pass
+
+    # Secondary fallback: cleanuri.com
+    try:
+        data = urllib.parse.urlencode({"url": long_url}).encode("utf-8")
+        req = urllib.request.Request(
+            "https://cleanuri.com/api/v1/shorten",
+            data=data,
+            headers={"User-Agent": "PixVibeFTP/1.0"}
+        )
+        with urllib.request.urlopen(req, timeout=3.5) as resp:
+            res = json.loads(resp.read().decode("utf-8"))
+            short = res.get("result_url", "").strip()
+            if short.startswith("https://"):
+                _short_url_cache[long_url] = short
+                return short
+    except Exception:
+        pass
+
+    return long_url
+
+async def _async_shorten_share(share, pub_url: str):
+    try:
+        short = await asyncio.to_thread(shorten_url_sync, pub_url)
+        if short:
+            share.short_url = short
+            history_manager.update_urls(share.token, public_url=pub_url, short_url=short)
+    except Exception:
+        pass
+
 @app.on_event("startup")
 async def startup_event():
     asyncio.create_task(broadcast_stats_loop())
@@ -65,43 +135,7 @@ def shutdown_event():
     tunnel_manager.stop()
     ftp_service.stop()
 
-# Native file dialogs in thread
-def _native_multi_file_picker() -> List[str]:
-    try:
-        import tkinter as tk
-        from tkinter import filedialog
-        root = tk.Tk()
-        root.withdraw()
-        root.attributes("-topmost", True)
-        files = filedialog.askopenfilenames(
-            title="Select Files to Share (Hold Ctrl or Shift to select multiple)"
-        )
-        root.destroy()
-        return list(files) if files else []
-    except Exception as e:
-        print(f"Error in file dialog: {e}")
-        return []
 
-def _native_folder_picker() -> List[str]:
-    try:
-        import tkinter as tk
-        from tkinter import filedialog
-        root = tk.Tk()
-        root.withdraw()
-        root.attributes("-topmost", True)
-        folder = filedialog.askdirectory(title="Select Entire Folder to Share")
-        root.destroy()
-        if not folder:
-            return []
-        
-        file_list = []
-        for root_dir, _, filenames in os.walk(folder):
-            for filename in filenames:
-                file_list.append(os.path.join(root_dir, filename))
-        return file_list
-    except Exception as e:
-        print(f"Error in folder dialog: {e}")
-        return []
 
 # Background WebSocket broadcaster for live dashboard updates
 async def broadcast_stats_loop():
@@ -118,6 +152,10 @@ async def broadcast_stats_loop():
 
             shares_list = []
             for token, share in transfer_manager.shares.items():
+                pub_url = format_public_link(base_public, token)
+                if pub_url and not share.short_url:
+                    asyncio.create_task(_async_shorten_share(share, pub_url))
+
                 shares_list.append({
                     "token": token,
                     "title": share.title,
@@ -138,7 +176,8 @@ async def broadcast_stats_loop():
                     "download_count": share.download_count,
                     "total_bytes_sent_gb": round(share.total_bytes_sent / (1024**3), 2),
                     "local_url": f"{base_local}/d/{token}",
-                    "public_url": format_public_link(base_public, token),
+                    "public_url": pub_url,
+                    "short_url": share.short_url or pub_url,
                 })
             stats["shares"] = shares_list
 
@@ -177,7 +216,7 @@ async def about_view(request: Request):
 
 @app.post("/api/select-files")
 async def select_files_dialog():
-    paths = await asyncio.to_thread(_native_multi_file_picker)
+    paths = await asyncio.to_thread(pick_files)
     if not paths:
         return {"status": "cancelled", "files": []}
 
@@ -208,7 +247,7 @@ async def select_files_dialog():
 
 @app.post("/api/select-folder")
 async def select_folder_dialog():
-    paths = await asyncio.to_thread(_native_folder_picker)
+    paths = await asyncio.to_thread(pick_folder)
     if not paths:
         return {"status": "cancelled", "files": []}
 
@@ -261,6 +300,29 @@ async def create_share(data: dict):
     local_url = f"http://{local_ip}:{port}/d/{share.token}"
     public_url = format_public_link(tunnel_manager.public_url, share.token)
 
+    # Automatically generate short URL via TinyURL if public URL is available
+    short_url = None
+    if public_url:
+        short_url = await asyncio.to_thread(shorten_url_sync, public_url)
+    share.short_url = short_url or public_url
+
+    # Record in persistent history
+    files_summary = [
+        {"name": f.file_name, "size": f.formatted_size, "category": f.category}
+        for f in share.files
+    ]
+    history_manager.record_share(
+        token=share.token,
+        title=share.title,
+        files_info=files_summary,
+        total_size_str=share.formatted_size,
+        total_bytes=share.total_size,
+        password_protected=share.password is not None,
+        public_url=public_url,
+        local_url=local_url,
+        short_url=share.short_url,
+    )
+
     return {
         "token": share.token,
         "title": share.title,
@@ -269,14 +331,41 @@ async def create_share(data: dict):
         "formatted_size": share.formatted_size,
         "local_url": local_url,
         "public_url": public_url,
+        "short_url": share.short_url or public_url,
     }
+
+@app.post("/api/shorten")
+async def shorten_url_endpoint(data: dict):
+    url = data.get("url", "").strip()
+    if not url:
+        return {"short_url": ""}
+    res = await asyncio.to_thread(shorten_url_sync, url)
+    return {"short_url": res or url}
 
 @app.delete("/api/shares/{token}")
 async def delete_share(token: str):
     removed = transfer_manager.remove_share(token)
     if not removed:
         raise HTTPException(status_code=404, detail="Share not found")
+    history_manager.mark_stopped(token)
     return {"status": "success", "message": "Share stopped"}
+
+@app.get("/api/history")
+async def get_history():
+    active_tokens = set(transfer_manager.shares.keys())
+    return history_manager.get_grouped_history(active_tokens=active_tokens)
+
+@app.delete("/api/history/{token}")
+async def delete_history_item(token: str):
+    success = history_manager.delete_entry(token)
+    if not success:
+        raise HTTPException(status_code=404, detail="History entry not found")
+    return {"status": "success"}
+
+@app.delete("/api/history")
+async def clear_history():
+    history_manager.clear_all()
+    return {"status": "success", "message": "History cleared"}
 
 @app.post("/api/tunnel/toggle")
 async def toggle_tunnel():
@@ -286,6 +375,18 @@ async def toggle_tunnel():
     else:
         success = await asyncio.to_thread(tunnel_manager.start)
         return {"status": "started" if success else "failed", "tunnel": tunnel_manager.get_info()}
+
+@app.get("/api/tunnel/tools")
+async def get_tunnel_tools():
+    return get_tools_status()
+
+@app.post("/api/tunnel/download-tool")
+async def download_tool_endpoint(data: dict):
+    tool = data.get("tool", "")
+    if tool not in ["ngrok", "cloudflared"]:
+        raise HTTPException(status_code=400, detail="Invalid tool name")
+    res = await asyncio.to_thread(download_tunnel_tool, tool)
+    return res
 
 @app.get("/api/settings")
 async def get_settings():
@@ -300,6 +401,7 @@ async def update_settings(data: dict):
     if ngrok_dom:
         ngrok_dom = ngrok_dom.replace("https://", "").replace("http://", "").strip().rstrip("/")
     settings["ngrok_domain"] = ngrok_dom
+    settings["ngrok_authtoken"] = data.get("ngrok_authtoken", "").strip()
 
     settings["cf_tunnel_token"] = data.get("cf_tunnel_token", "").strip()
     settings["cf_custom_domain"] = data.get("cf_custom_domain", "").strip()
@@ -317,6 +419,19 @@ async def toggle_ftp():
     else:
         ftp_service.start()
     return {"status": "success", "ftp": ftp_service.get_info()}
+
+@app.post("/api/server/shutdown")
+async def shutdown_server():
+    def _exit_later():
+        time.sleep(0.8)
+        tunnel_manager.stop()
+        ftp_service.stop()
+        os._exit(0)
+
+    import threading
+    import time
+    threading.Thread(target=_exit_later, daemon=True).start()
+    return {"status": "shutting_down", "message": "Server stopped and port released successfully."}
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):

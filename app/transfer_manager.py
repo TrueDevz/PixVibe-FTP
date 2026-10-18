@@ -104,6 +104,7 @@ class ShareItem:
     title: str
     files: List[FileEntry]
     password: Optional[str] = None
+    short_url: Optional[str] = None
     created_at: float = field(default_factory=time.time)
     download_count: int = 0
     total_bytes_sent: int = 0
