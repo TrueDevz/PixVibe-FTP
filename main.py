@@ -23,8 +23,14 @@ def main():
     # Auto start tunnel in background
     def _start_tunnel():
         settings = load_settings()
-        provider = settings.get("tunnel_provider", "ngrok").upper()
-        print(f"[LocalFTP] Starting Tunnel Provider: {provider}...")
+        provider = settings.get("tunnel_provider", "ngrok")
+        domain = settings.get("ngrok_domain", "").strip()
+
+        if provider == "ngrok" and not domain:
+            print("[LocalFTP] ℹ️ Ngrok domain not set yet. Please enter it in the dashboard (Tunnel Settings).")
+            return
+
+        print(f"[LocalFTP] Starting Tunnel Provider: {provider.upper()}...")
         tunnel_manager.start()
         if tunnel_manager.public_url:
             print(f"[LocalFTP] 🌐 Static Public Internet URL Ready: {tunnel_manager.public_url}")

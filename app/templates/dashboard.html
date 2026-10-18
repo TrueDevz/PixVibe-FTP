@@ -260,11 +260,11 @@
         <div id="ngrokFieldsContainer" class="space-y-2 pt-2 border-t border-slate-800">
           <div>
             <label class="block text-slate-300 mb-1 font-medium">Your Ngrok Static Domain:</label>
-            <input type="text" id="cfgNgrokDomain" value="unmobbed-corrina-mustily.ngrok-free.dev" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-slate-200 focus:outline-none focus:border-blue-500 font-mono text-xs">
+            <input type="text" id="cfgNgrokDomain" placeholder="e.g. unmobbed-corrina-mustily.ngrok-free.dev" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-slate-200 focus:outline-none focus:border-blue-500 font-mono text-xs">
           </div>
           <p class="text-[11px] text-emerald-400 flex items-center gap-1.5">
             <i class="fa-solid fa-circle-check"></i>
-            <span>This domain never changes across disconnects!</span>
+            <span>Domain is saved automatically. You can change it anytime here.</span>
           </p>
         </div>
 
@@ -467,7 +467,7 @@
 
       const totalBytes = selectedStagingFiles.reduce((acc, f) => acc + f.file_size, 0);
       const totalFormatted = (totalBytes >= 1024**3) 
-        ? `${(totalBytes / (1024**3)).2toFixed ? (totalBytes / (1024**3)).toFixed(2) : (totalBytes / (1024**3)).toFixed(2)} GB` 
+        ? `${(totalBytes / (1024**3)).toFixed(2)} GB` 
         : `${(totalBytes / (1024**2)).toFixed(2)} MB`;
       document.getElementById('stagingTotalSize').innerText = totalFormatted;
 
@@ -562,7 +562,7 @@
         const res = await fetch('/api/settings');
         const cfg = await res.json();
         setTunnelMode(cfg.tunnel_provider || 'ngrok');
-        document.getElementById('cfgNgrokDomain').value = cfg.ngrok_domain || 'unmobbed-corrina-mustily.ngrok-free.dev';
+        document.getElementById('cfgNgrokDomain').value = cfg.ngrok_domain || '';
         document.getElementById('cfgTunnelToken').value = cfg.cf_tunnel_token || '';
         document.getElementById('cfgCustomDomain').value = cfg.cf_custom_domain || '';
       } catch (err) {
@@ -605,7 +605,7 @@
     async function saveTunnelSettings() {
       const btn = document.getElementById('saveSettingsBtn');
       btn.disabled = true;
-      btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin mr-1"></i> Saving...`;
+      btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin mr-1"></i> Saving & Connecting...`;
 
       try {
         const res = await fetch('/api/settings', {
@@ -618,7 +618,8 @@
             cf_custom_domain: document.getElementById('cfgCustomDomain').value
           })
         });
-        showToast("Tunnel updated to " + currentTunnelMode.toUpperCase() + " successfully!");
+        const data = await res.json();
+        showToast("Tunnel updated and saved permanently!");
         closeSettingsModal();
       } catch (err) {
         alert("Failed to save settings: " + err);
@@ -653,9 +654,15 @@
       } else if (tunnel.status === 'connecting') {
         tBadge.innerText = "Connecting...";
         tBadge.className = "font-medium px-2 py-0.5 rounded text-amber-300 bg-amber-500/10";
+      } else if (tunnel.status === 'not_configured') {
+        tBadge.innerText = "Set Domain in Tunnel";
+        tBadge.className = "font-medium px-2 py-0.5 rounded text-amber-300 bg-amber-500/10";
+      } else if (tunnel.status === 'error') {
+        tBadge.innerText = "Error (Click Tunnel)";
+        tBadge.className = "font-medium px-2 py-0.5 rounded text-rose-300 bg-rose-500/10";
       } else {
         tBadge.innerText = "Offline";
-        tBadge.className = "font-medium px-2 py-0.5 rounded text-rose-300 bg-rose-500/10";
+        tBadge.className = "font-medium px-2 py-0.5 rounded text-slate-400 bg-slate-800";
       }
 
       const ftpBtn = document.getElementById('ftpToggleBtn');
@@ -785,8 +792,22 @@
       }).join('');
     }
 
-    window.addEventListener('DOMContentLoaded', () => {
+    async function initDashboard() {
       connectWS();
+      try {
+        const res = await fetch('/api/settings');
+        const cfg = await res.json();
+        if (cfg.ngrok_domain) {
+          const domInput = document.getElementById('cfgNgrokDomain');
+          if (domInput) domInput.value = cfg.ngrok_domain;
+        }
+      } catch (err) {
+        console.error("Init error:", err);
+      }
+    }
+
+    window.addEventListener('DOMContentLoaded', () => {
+      initDashboard();
     });
   </script>
 </body>

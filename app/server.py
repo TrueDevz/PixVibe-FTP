@@ -295,14 +295,18 @@ async def get_settings():
 async def update_settings(data: dict):
     settings = load_settings()
     settings["tunnel_provider"] = data.get("tunnel_provider", settings.get("tunnel_provider", "ngrok"))
-    settings["ngrok_domain"] = data.get("ngrok_domain", settings.get("ngrok_domain", "")).strip()
-    settings["cf_tunnel_token"] = data.get("cf_tunnel_token", settings.get("cf_tunnel_token", "")).strip()
-    settings["cf_custom_domain"] = data.get("cf_custom_domain", settings.get("cf_custom_domain", "")).strip()
+    
+    ngrok_dom = data.get("ngrok_domain", "").strip()
+    if ngrok_dom:
+        ngrok_dom = ngrok_dom.replace("https://", "").replace("http://", "").strip().rstrip("/")
+    settings["ngrok_domain"] = ngrok_dom
+
+    settings["cf_tunnel_token"] = data.get("cf_tunnel_token", "").strip()
+    settings["cf_custom_domain"] = data.get("cf_custom_domain", "").strip()
     save_settings(settings)
 
-    if tunnel_manager.status in ["connected", "connecting"]:
-        await asyncio.to_thread(tunnel_manager.stop)
-        await asyncio.to_thread(tunnel_manager.start)
+    await asyncio.to_thread(tunnel_manager.stop)
+    await asyncio.to_thread(tunnel_manager.start)
 
     return {"status": "saved", "settings": settings, "tunnel": tunnel_manager.get_info()}
 

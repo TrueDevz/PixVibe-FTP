@@ -14,7 +14,7 @@ class TunnelManager:
         self.port = port
         self.process: Optional[subprocess.Popen] = None
         self.public_url: Optional[str] = None
-        self.status = "stopped"  # stopped, connecting, connected, error
+        self.status = "stopped"  # stopped, connecting, connected, error, not_configured
         self.error_message: Optional[str] = None
         self.provider = "ngrok"  # "ngrok", "cloudflare_quick", "cloudflare_token"
         self._reader_thread: Optional[threading.Thread] = None
@@ -33,22 +33,29 @@ class TunnelManager:
         self._stop_event.clear()
 
         cmd = []
+        expected_url = None
+
         if self.provider == "ngrok":
             domain = settings.get("ngrok_domain", "").strip()
             if not domain:
-                domain = "unmobbed-corrina-mustily.ngrok-free.dev"
-            cmd = ["ngrok", "http", str(self.port), "--url", domain, "--log=stdout"]
-            expected_url = domain if domain.startswith("http") else f"https://{domain}"
+                self.status = "not_configured"
+                self.error_message = "Please configure your Ngrok domain in Tunnel Settings."
+                return False
+
+            clean_domain = domain.replace("https://", "").replace("http://", "").strip().rstrip("/")
+            cmd = ["ngrok", "http", str(self.port), "--url", clean_domain, "--log=stdout"]
+            expected_url = f"https://{clean_domain}"
 
         elif self.provider == "cloudflare_token":
             token = settings.get("cf_tunnel_token", "").strip()
             domain = settings.get("cf_custom_domain", "").strip()
             if not token:
-                self.status = "error"
+                self.status = "not_configured"
                 self.error_message = "Cloudflare Tunnel Token is required."
                 return False
+            clean_domain = domain.replace("https://", "").replace("http://", "").strip().rstrip("/")
             cmd = ["cloudflared", "tunnel", "run", "--token", token]
-            expected_url = domain if domain.startswith("http") else f"https://{domain}" if domain else None
+            expected_url = f"https://{clean_domain}" if clean_domain else None
 
         else:
             # cloudflare_quick
@@ -66,9 +73,9 @@ class TunnelManager:
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
             )
         except FileNotFoundError:
-            executable = cmd[0]
+            executable = cmd[0] if cmd else "tunnel"
             self.status = "error"
-            self.error_message = f"Executable '{executable}' not found in PATH."
+            self.error_message = f"Executable '{executable}' not found in system PATH."
             return False
         except Exception as e:
             self.status = "error"
@@ -78,7 +85,6 @@ class TunnelManager:
         self._reader_thread = threading.Thread(target=self._monitor_output, daemon=True)
         self._reader_thread.start()
 
-        # If we have a predetermined static URL (like ngrok or cf_token), wait for healthy startup
         start_time = time.time()
         timeout = 15.0
 
@@ -90,11 +96,10 @@ class TunnelManager:
             if self.process.poll() is not None:
                 self.status = "error"
                 if not self.error_message:
-                    self.error_message = f"Tunnel exited with code {self.process.returncode}"
+                    self.error_message = f"Tunnel process exited with code {self.process.returncode}"
                 return False
             time.sleep(0.3)
 
-        # Fallback if expected_url is known and process is still running healthy
         if expected_url and self.process and self.process.poll() is None:
             self.public_url = expected_url
             self.status = "connected"
@@ -121,23 +126,24 @@ class TunnelManager:
                 if not line:
                     break
 
-                # Ngrok output matching
+                # Ngrok
                 if self.provider == "ngrok":
                     match = ngrok_pattern.search(line)
                     if match:
                         self.public_url = match.group(1)
                         self.status = "connected"
-                    if "lvl=eror" in line or "ERR_NGROK" in line:
+                    if "lvl=eror" in line or "ERR_NGROK" in line or "failed to start tunnel" in line:
                         self.error_message = line.strip()
+                        self.status = "error"
 
-                # Cloudflare Quick Tunnel matching
+                # Cloudflare Quick
                 elif self.provider == "cloudflare_quick":
                     match = cf_pattern.search(line)
                     if match and not self.public_url:
                         self.public_url = match.group(0)
                         self.status = "connected"
 
-                # Cloudflare Token matching
+                # Cloudflare Token
                 elif self.provider == "cloudflare_token":
                     if "Registered tunnel connection" in line:
                         self.status = "connected"
@@ -145,7 +151,8 @@ class TunnelManager:
             self.error_message = str(e)
         finally:
             if self.process and self.process.poll() is not None and not self._stop_event.is_set():
-                self.status = "stopped"
+                if self.status != "error":
+                    self.status = "stopped"
 
     def stop(self):
         self._stop_event.set()
