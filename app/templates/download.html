@@ -92,15 +92,27 @@
           </button>
         </div>
 
-        <!-- Accelerator Tip -->
-        <div class="bg-blue-950/30 border border-blue-800/30 rounded-xl p-3.5 text-xs text-slate-300 space-y-1.5">
-          <div class="flex items-center gap-2 font-semibold text-blue-400">
-            <i class="fa-solid fa-circle-info"></i>
-            <span>Fast Download & Resume Info:</span>
+        <!-- Accelerator Tip & Resume Guide -->
+        <div class="bg-blue-950/30 border border-blue-800/40 rounded-2xl p-4 text-xs text-slate-300 space-y-2.5">
+          <div class="flex items-center justify-between font-semibold text-blue-400">
+            <span class="flex items-center gap-2">
+              <i class="fa-solid fa-bolt"></i>
+              <span>High-Speed IDM / Resume Guide</span>
+            </span>
+            <span class="text-[10px] bg-blue-500/20 text-blue-300 px-2 py-0.5 rounded-full font-mono">RFC 7233 Resume</span>
           </div>
           <p class="text-[11px] text-slate-400 leading-relaxed">
-            This download supports <strong>HTTP Resume</strong>. You can pause and resume anytime in your browser, or paste the link into <strong>IDM, FDM, or Aria2</strong> for multi-threaded maximum speeds!
+            Paste this direct link into <strong>IDM (Internet Download Manager)</strong> or <strong>FDM</strong> for 8–16 parallel threads at maximum ISP speed.
           </p>
+          <div class="pt-2 border-t border-blue-900/50 space-y-1.5 text-[11px]">
+            <p class="font-semibold text-emerald-400 flex items-center gap-1.5">
+              <i class="fa-solid fa-arrows-rotate"></i>
+              <span>If host internet reconnects during download:</span>
+            </p>
+            <p class="text-slate-400 pl-4">
+              <strong>IDM:</strong> Right click the download &rarr; <em>"Refresh Download Address"</em> &rarr; paste the updated link &rarr; Click <em>Resume</em>. <strong>It will continue directly from where it stopped (e.g. 90%) without starting over!</strong>
+            </p>
+          </div>
         </div>
 
       </div>

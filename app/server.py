@@ -15,6 +15,8 @@ from app.config import (
     STATIC_DIR,
     TEMPLATES_DIR,
     get_local_ip,
+    load_settings,
+    save_settings,
 )
 from app.ftp_server import ftp_service
 from app.streamer import create_streaming_response
@@ -187,6 +189,25 @@ async def toggle_tunnel():
     else:
         success = await asyncio.to_thread(tunnel_manager.start)
         return {"status": "started" if success else "failed", "tunnel": tunnel_manager.get_info()}
+
+@app.get("/api/settings")
+async def get_settings():
+    return load_settings()
+
+@app.post("/api/settings")
+async def update_settings(data: dict):
+    settings = load_settings()
+    settings["tunnel_type"] = data.get("tunnel_type", settings.get("tunnel_type", "quick"))
+    settings["tunnel_token"] = data.get("tunnel_token", settings.get("tunnel_token", "")).strip()
+    settings["custom_domain"] = data.get("custom_domain", settings.get("custom_domain", "")).strip()
+    save_settings(settings)
+
+    # If tunnel is active, restart with new settings
+    if tunnel_manager.status in ["connected", "connecting"]:
+        await asyncio.to_thread(tunnel_manager.stop)
+        await asyncio.to_thread(tunnel_manager.start)
+
+    return {"status": "saved", "settings": settings, "tunnel": tunnel_manager.get_info()}
 
 @app.post("/api/ftp/toggle")
 async def toggle_ftp():

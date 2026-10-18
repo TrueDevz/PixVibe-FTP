@@ -1,22 +1,38 @@
+import json
 import os
 import socket
 from pathlib import Path
+from typing import Optional
 
-# Paths
 BASE_DIR = Path(__file__).resolve().parent.parent
 APP_DIR = Path(__file__).resolve().parent
 STATIC_DIR = APP_DIR / "static"
 TEMPLATES_DIR = APP_DIR / "templates"
+CONFIG_FILE = BASE_DIR / "settings.json"
 
-# Network & Server Settings
 DEFAULT_PORT = 8000
-CHUNK_SIZE = 1024 * 1024  # 1 MB chunk buffer for high-throughput 30GB streaming
+CHUNK_SIZE = 1024 * 1024  # 1 MB chunk buffer
+
+def load_settings() -> dict:
+    if CONFIG_FILE.is_file():
+        try:
+            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {
+        "tunnel_type": "quick",  # "quick" or "token"
+        "tunnel_token": "",
+        "custom_domain": "",
+    }
+
+def save_settings(settings: dict):
+    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+        json.dump(settings, f, indent=2)
 
 def get_local_ip() -> str:
-    """Detect the machine's primary local LAN IP address."""
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        # Using Google Public DNS to find default route interface without sending data
         s.connect(("8.8.8.8", 80))
         ip = s.getsockname()[0]
         s.close()
@@ -25,7 +41,6 @@ def get_local_ip() -> str:
         return "127.0.0.1"
 
 def find_available_port(start_port: int = DEFAULT_PORT) -> int:
-    """Find an available port starting from start_port."""
     port = start_port
     while port < 65535:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
