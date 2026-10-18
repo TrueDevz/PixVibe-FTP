@@ -1,4 +1,8 @@
 {
+  "tunnel_provider": "ngrok",
+  "ngrok_domain": "unmobbed-corrina-mustily.ngrok-free.dev",
+  "cf_tunnel_token": "",
+  "cf_custom_domain": "",
   "tunnel_type": "quick",
   "tunnel_token": "",
   "custom_domain": ""

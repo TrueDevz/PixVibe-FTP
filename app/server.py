@@ -21,7 +21,7 @@ from app.config import (
 from app.ftp_server import ftp_service
 from app.streamer import create_streaming_response
 from app.transfer_manager import transfer_manager
-from app.tunnel import CloudflareTunnelManager
+from app.tunnel import TunnelManager
 
 app = FastAPI(title="LocalFTP - Direct High-Speed File Transfer")
 
@@ -39,8 +39,16 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 # State
-tunnel_manager = CloudflareTunnelManager(port=DEFAULT_PORT)
+tunnel_manager = TunnelManager(port=DEFAULT_PORT)
 active_websockets: Set[WebSocket] = set()
+
+def format_public_link(base_url: Optional[str], token: str) -> Optional[str]:
+    if not base_url:
+        return None
+    url = f"{base_url}/d/{token}"
+    if "ngrok" in base_url:
+        url += "?ngrok-skip-browser-warning=true"
+    return url
 
 @app.on_event("startup")
 async def startup_event():
@@ -95,7 +103,7 @@ async def broadcast_stats_loop():
                     "download_count": share.download_count,
                     "total_bytes_sent_gb": round(share.total_bytes_sent / (1024**3), 2),
                     "local_url": f"{base_local}/d/{token}",
-                    "public_url": f"{base_public}/d/{token}" if base_public else None,
+                    "public_url": format_public_link(base_public, token),
                 })
             stats["shares"] = shares_list
 
@@ -163,7 +171,7 @@ async def create_share(data: dict):
     local_ip = get_local_ip()
     port = tunnel_manager.port
     local_url = f"http://{local_ip}:{port}/d/{share.token}"
-    public_url = f"{tunnel_manager.public_url}/d/{share.token}" if tunnel_manager.public_url else None
+    public_url = format_public_link(tunnel_manager.public_url, share.token)
 
     return {
         "token": share.token,
@@ -197,9 +205,10 @@ async def get_settings():
 @app.post("/api/settings")
 async def update_settings(data: dict):
     settings = load_settings()
-    settings["tunnel_type"] = data.get("tunnel_type", settings.get("tunnel_type", "quick"))
-    settings["tunnel_token"] = data.get("tunnel_token", settings.get("tunnel_token", "")).strip()
-    settings["custom_domain"] = data.get("custom_domain", settings.get("custom_domain", "")).strip()
+    settings["tunnel_provider"] = data.get("tunnel_provider", settings.get("tunnel_provider", "ngrok"))
+    settings["ngrok_domain"] = data.get("ngrok_domain", settings.get("ngrok_domain", "")).strip()
+    settings["cf_tunnel_token"] = data.get("cf_tunnel_token", settings.get("cf_tunnel_token", "")).strip()
+    settings["cf_custom_domain"] = data.get("cf_custom_domain", settings.get("cf_custom_domain", "")).strip()
     save_settings(settings)
 
     # If tunnel is active, restart with new settings

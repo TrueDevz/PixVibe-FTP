@@ -3,7 +3,7 @@ import threading
 import time
 import webbrowser
 import uvicorn
-from app.config import find_available_port, DEFAULT_PORT
+from app.config import find_available_port, DEFAULT_PORT, load_settings
 from app.server import app, tunnel_manager
 
 def open_browser(port: int):
@@ -22,10 +22,12 @@ def main():
 
     # Auto start tunnel in background
     def _start_tunnel():
-        print("[LocalFTP] Starting Cloudflare Quick Tunnel (Free Public HTTPS)...")
+        settings = load_settings()
+        provider = settings.get("tunnel_provider", "ngrok").upper()
+        print(f"[LocalFTP] Starting Tunnel Provider: {provider}...")
         tunnel_manager.start()
         if tunnel_manager.public_url:
-            print(f"[LocalFTP] 🌐 Public Internet URL Ready: {tunnel_manager.public_url}")
+            print(f"[LocalFTP] 🌐 Static Public Internet URL Ready: {tunnel_manager.public_url}")
 
     threading.Thread(target=_start_tunnel, daemon=True).start()
 

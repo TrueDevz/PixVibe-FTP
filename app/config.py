@@ -13,22 +13,30 @@ CONFIG_FILE = BASE_DIR / "settings.json"
 DEFAULT_PORT = 8000
 CHUNK_SIZE = 1024 * 1024  # 1 MB chunk buffer
 
+DEFAULT_SETTINGS = {
+    "tunnel_provider": "ngrok",  # "ngrok", "cloudflare_quick", or "cloudflare_token"
+    "ngrok_domain": "unmobbed-corrina-mustily.ngrok-free.dev",
+    "cf_tunnel_token": "",
+    "cf_custom_domain": "",
+}
+
 def load_settings() -> dict:
     if CONFIG_FILE.is_file():
         try:
             with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
+                data = json.load(f)
+                merged = dict(DEFAULT_SETTINGS)
+                merged.update(data)
+                return merged
         except Exception:
             pass
-    return {
-        "tunnel_type": "quick",  # "quick" or "token"
-        "tunnel_token": "",
-        "custom_domain": "",
-    }
+    return dict(DEFAULT_SETTINGS)
 
 def save_settings(settings: dict):
+    merged = dict(DEFAULT_SETTINGS)
+    merged.update(settings)
     with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-        json.dump(settings, f, indent=2)
+        json.dump(merged, f, indent=2)
 
 def get_local_ip() -> str:
     try:
